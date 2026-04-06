@@ -6,6 +6,8 @@
     <title>Puntero Mágico QR</title>
     
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
     <style>
         body {
             background-color: #121212;
@@ -20,6 +22,12 @@
             overflow: hidden;
         }
         #desktop-view { text-align: center; }
+        #qrcode {
+            border: 15px solid white;
+            border-radius: 10px;
+            background: white;
+            margin-bottom: 20px;
+        }
         #pointer {
             position: absolute;
             width: 20px;
@@ -27,7 +35,7 @@
             background-color: #ff2a2a;
             border-radius: 50%;
             box-shadow: 0 0 15px #ff2a2a;
-            display: none;
+            display: none; /* Oculto hasta que el móvil se conecte */
             pointer-events: none;
             z-index: 9999;
             transform: translate(-50%, -50%);
@@ -51,30 +59,24 @@
 <body>
 
     <div id="desktop-view" style="display:none;">
-        <h2 id="desktop-status">Esperando a que escanees tu QR...</h2>
+        <h2 id="desktop-status">Escanea este código con tu móvil</h2>
+        <canvas id="qrcode"></canvas>
         <div id="pointer"></div>
     </div>
 
     <div id="mobile-view">
-        <h2 id="mobile-status">Conectando...</h2>
+        <h2 id="mobile-status">Conectando a la pizarra...</h2>
         <button id="start-btn" style="display:none;">Activar Puntero</button>
         <button id="recal-btn">Recalibrar Centro</button>
     </div>
 
     <script>
-        // ==========================================
-        // CONFIGURACIÓN IMPORTANTE
-        // ==========================================
-        // Pon aquí una contraseña o nombre único. Si alguien usa el mismo, fallará.
-        // Escribe algo largo y sin espacios (ej: mi-puntero-clase-juan-12345)
-        const ID_FIJO = "mi-puntero-secreto-definitivo-999"; 
-        
         const urlParams = new URLSearchParams(window.location.search);
         const hostId = urlParams.get('host');
 
         if (hostId) {
             // ==========================================
-            // MÓVIL
+            // MÓVIL (Lo que pasa cuando escaneas el QR)
             // ==========================================
             document.getElementById('mobile-view').style.display = 'block';
             const peer = new Peer();
@@ -86,7 +88,7 @@
             peer.on('open', () => {
                 conn = peer.connect(hostId);
                 conn.on('open', () => {
-                    statusText.innerText = "¡Conectado a la pizarra!";
+                    statusText.innerText = "¡Conectado!";
                     startBtn.style.display = 'inline-block';
                 });
             });
@@ -111,7 +113,7 @@
             function activarSensores() {
                 startBtn.style.display = 'none';
                 recalBtn.style.display = 'inline-block';
-                statusText.innerText = "Apunta a la pantalla y mueve el móvil";
+                statusText.innerText = "Mueve el móvil como un puntero";
                 
                 window.addEventListener('deviceorientation', (event) => {
                     if (conn && conn.open) {
@@ -122,22 +124,32 @@
 
         } else {
             // ==========================================
-            // ORDENADOR (PANTALLA)
+            // ORDENADOR (Lo que pasa al abrir la web normal)
             // ==========================================
             document.getElementById('desktop-view').style.display = 'block';
             
-            // Le decimos a la página que use SIEMPRE el mismo ID
-            const peer = new Peer(ID_FIJO); 
+            // Inventamos un ID aleatorio al instante para que no se atasque
+            const miIDAleatorio = 'puntero-' + Math.floor(Math.random() * 1000000);
+            
+            // Construimos la URL que tendrá el código QR
+            const mobileUrl = window.location.href.split('?')[0] + '?host=' + miIDAleatorio;
+            
+            // Dibujamos el QR en la pantalla de forma instantánea
+            const qrCanvas = document.getElementById('qrcode');
+            QRCode.toCanvas(qrCanvas, mobileUrl, function (error) {
+                if (error) console.error(error);
+            });
+
+            // Arrancamos la conexión escuchando ese ID
+            const peer = new Peer(miIDAleatorio); 
             const pointer = document.getElementById('pointer');
             const statusText = document.getElementById('desktop-status');
 
-            peer.on('open', () => {
-                statusText.innerText = "Listo. Esperando a que uses el móvil...";
-            });
-
             peer.on('connection', (conn) => {
-                statusText.style.display = 'none'; // Ocultamos el texto
-                pointer.style.display = 'block';   // Mostramos la bola roja
+                // ¡MAGIA! Cuando el móvil se conecta, ocultamos el QR y sacamos el ratón rojo
+                qrCanvas.style.display = 'none';
+                statusText.style.display = 'none';
+                pointer.style.display = 'block';
 
                 let initialBeta = null;
                 let initialGamma = null;
