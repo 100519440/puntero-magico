@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puntero Mágico QR</title>
+    
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        /* Estilos del ordenador */
+        #desktop-view { text-align: center; }
+        #qrcode {
+            border: 15px solid white;
+            border-radius: 10px;
+            background: white;
+            margin-bottom: 20px;
+        }
+        #pointer {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: #ff2a2a;
+            border-radius: 50%;
+            box-shadow: 0 0 15px #ff2a2a;
+            display: none; /* Se oculta hasta que el móvil se conecte */
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%); /* Centrar el punto exacto */
+        }
+        /* Estilos del móvil */
+        #mobile-view { text-align: center; display: none; }
+        button {
+            padding: 20px 30px;
+            font-size: 20px;
+            border-radius: 10px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            margin: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        button:active { background-color: #0056b3; }
+        #recal-btn { background-color: #ff9800; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="desktop-view" style="display:none;">
+        <h2 id="desktop-status">Generando código QR...</h2>
+        <canvas id="qrcode"></canvas>
+        <p>Escanea este código con tu móvil</p>
+        <div id="pointer"></div>
+    </div>
+
+    <div id="mobile-view">
+        <h2 id="mobile-status">Conectando con la pantalla...</h2>
+        <button id="start-btn" style="display:none;">Activar Puntero</button>
+        <button id="recal-btn">Recalibrar Centro</button>
+    </div>
+
+    <script>
+        // Comprobamos la URL para saber si somos el móvil (tiene parámetro ?host=) o el ordenador
+        const urlParams = new URLSearchParams(window.location.search);
+        const hostId = urlParams.get('host');
+
+        if (hostId) {
+            // ==========================================
+            // LÓGICA DEL MÓVIL (CONTROLADOR)
+            // ==========================================
+            document.getElementById('mobile-view').style.display = 'block';
+            const peer = new Peer();
+            const startBtn = document.getElementById('start-btn');
+            const recalBtn = document.getElementById('recal-btn');
+            const statusText = document.getElementById('mobile-status');
+            let conn;
+
+            peer.on('open', () => {
+                // Nos conectamos al ID del ordenador
+                conn = peer.connect(hostId);
+                conn.on('open', () => {
+                    statusText.innerText = "¡Conectado!";
+                    startBtn.style.display = 'inline-block';
+                });
+            });
+
+            startBtn.addEventListener('click', () => {
+                // Los móviles modernos (sobre todo iOS) piden permiso explícito para usar el giroscopio
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                        .then(permissionState => {
+                            if (permissionState === 'granted') {
+                                activarSensores();
+                            } else {
+                                alert("Se necesitan permisos del giroscopio para funcionar.");
+                            }
+                        })
+                        .catch(console.error);
+                } else {
+                    activarSensores();
+                }
+            });
+
+            recalBtn.addEventListener('click', () => {
+                if (conn && conn.open) {
+                    conn.send({ action: 'recalibrate' });
+                }
+            });
+
+            function activarSensores() {
+                startBtn.style.display = 'none';
+                recalBtn.style.display = 'inline-block';
+                statusText.innerText = "Apunta a la pantalla y mueve el móvil";
+                
+                // Leemos los datos del giroscopio y los enviamos al ordenador
+                window.addEventListener('deviceorientation', (event) => {
+                    if (conn && conn.open) {
+                        conn.send({
+                            beta: event.beta,   // Inclinación adelante/atrás
+                            gamma: event.gamma  // Inclinación izquierda/derecha
+                        });
+                    }
+                });
+            }
+
+        } else {
+            // ==========================================
+            // LÓGICA DEL ORDENADOR (PANTALLA)
+            // ==========================================
+            document.getElementById('desktop-view').style.display = 'block';
+            const peer = new Peer();
+            const pointer = document.getElementById('pointer');
+            const statusText = document.getElementById('desktop-status');
+            const qrCanvas = document.getElementById('qrcode');
+
+            peer.on('open', (id) => {
+                // Creamos la URL para el móvil añadiendo el ID de esta sesión
+                const mobileUrl = window.location.href.split('?')[0] + '?host=' + id;
+                
+                // Generamos el QR
+                QRCode.toCanvas(qrCanvas, mobileUrl, function (error) {
+                    if (error) console.error(error);
+                    statusText.innerText = "Puntero Web Listo";
+                });
+            });
+
+            peer.on('connection', (conn) => {
+                // Cuando el móvil se conecta, ocultamos el QR y mostramos el puntero
+                qrCanvas.style.display = 'none';
+                document.querySelector('#desktop-view p').style.display = 'none';
+                pointer.style.display = 'block';
+                statusText.innerText = "Móvil conectado";
+
+                let initialBeta = null;
+                let initialGamma = null;
+                const sensitivity = 20; // Ajusta esto si el puntero va muy lento o muy rápido
+
+                conn.on('data', (data) => {
+                    if (data.action === 'recalibrate') {
+                        // Reseteamos el centro si el usuario pulsa el botón en el móvil
+                        initialBeta = null;
+                        initialGamma = null;
+                        return;
+                    }
+
+                    // Establecemos el "centro" la primera vez que recibimos datos
+                    if (initialBeta === null) initialBeta = data.beta;
+                    if (initialGamma === null) initialGamma = data.gamma;
+
+                    // Calculamos la diferencia de inclinación
+                    let diffGamma = data.gamma - initialGamma; // Eje X
+                    let diffBeta = data.beta - initialBeta;    // Eje Y
+
+                    // Mapeamos esa diferencia a los píxeles de la pantalla
+                    let x = (window.innerWidth / 2) + (diffGamma * sensitivity);
+                    let y = (window.innerHeight / 2) + (diffBeta * sensitivity);
+
+                    // Evitamos que el puntero se salga de los bordes de la pantalla
+                    x = Math.max(0, Math.min(window.innerWidth, x));
+                    y = Math.max(0, Math.min(window.innerHeight, y));
+
+                    // Movemos la bolita roja
+                    pointer.style.left = x + 'px';
+                    pointer.style.top = y + 'px';
+                });
+            });
+        }
+    </script>
+</body>
+</html>
